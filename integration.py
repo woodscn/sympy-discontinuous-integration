@@ -8,10 +8,13 @@ H = sympy.special.delta_functions.Heaviside
 
 class IntegrableFunction(object):
     """
-Short Summary: (delete this heading)
-
-Extended Summary: (delete this heading)
-Does not allow much in the way of integration options, only providing 'points'.
+Allows symbolic processing of discontinuous integrand functions for efficient
+evaluation of numerical integrals using the SciPy library. Largely uses default
+options for scipy.integrate.quad, though it does automatically specify the
+locations of discontinuities ('points') at the various levels of integration.
+Relies on the use of sympy.Solve for this preprocessing, meaning that
+difficulties may arise if these intermediate expressions cannot be solved in
+closed-form using current Sympy algorithms.
 
 Parameters
 ----------
