@@ -135,16 +135,30 @@ class EmptyDiscontinuity(UserWarning):
 
 
 class Discontinuity(object):
-    def __init__(self, disc, ranges, args={}, opts={}):
-        self._disc = disc.subs(args)
+    """
+Parameters
+----------
+'disc' : Sympy expression
+    Symbolic discontinuity f(x0 ... ) =0
+'ranges' : iterable
+    List of Sympy variable ranges in order e.g. ((x,0,1),(y,0,1)).
+'args' : iterable, optional
+    Any non-integration variables in the discontinuity.
+'opts' : dict, optional
+    Any options that may be required.
+"""
+    def __init__(self, disc, ranges, args=[], **kwargs):
+        self._disc = disc#.subs(args)
         self._ranges = ranges
         self._args = args
-        self._opts = opts
-        # Eventually set self.method from opts
+        self._opts = kwargs
+        # Eventually set self.method from kwargs
         self._method = "lambdified"
+        # Solve disc for ranges[0][0]
         self.sym_sols = self._solve_points()
         if not self.sym_sols:
             raise EmptyDiscontinuity()
+        # Create function [x0] = f(x1,...)
         self.call_args, self._lambda_list = self._lambdify()
         self.children = self._spawn()
 
@@ -182,7 +196,7 @@ class Discontinuity(object):
 
     def _lambdify(self):
         lambda_list = []
-        vars = [range_[0] for range_ in self._ranges[1:]]
+        vars = [range_[0] for range_ in self._ranges[1:]] + self._args
         for sym_sol in self.sym_sols:
             lambda_list.append(lambdify(vars, sym_sol))
         self.__call__.__func__.__doc__ += (
@@ -201,7 +215,8 @@ class Discontinuity(object):
         out = []
         for disc in new_discs:
             try:
-                out.append(Discontinuity(disc, self._ranges[1:]))
+                out.append(
+                    Discontinuity(disc, self._ranges[1:], args=self._args))
             except(EmptyDiscontinuity):
                 continue
         return out
@@ -212,7 +227,8 @@ class Discontinuity(object):
         out = []
         for disc in new_discs:
             try:
-                out.append(Discontinuity(disc, self._ranges[1:]))
+                out.append(
+                    Discontinuity(disc, self._ranges[1:], args=self._args))
             except(EmptyDiscontinuity):
                 continue
         return out
@@ -286,32 +302,37 @@ def empty(seq): # Thanks StackOverflow!
         return False
 
 
-if __name__ == "__main__":
-    # Test handling of symbolic discontinuities
-    x, y, z = [sympy.Symbol(var, real=True) for var in ['x', 'y', 'z']]
+def testDiscontinuity():
+    w, x, y, z = [sympy.Symbol(var, real=True) for var in ['w', 'x', 'y', 'z']]
     ranges = [[x, -.25, 1.25], [y, -.25, 1.25], [z, -.25, 1.25]]
-    sym_disc = x ** 2 + y ** 2 + z ** 2 - 1
-    disc = Discontinuity(sym_disc, ranges)
-    eqns = [- sympy.sqrt(1 - y ** 2 - z ** 2), sympy.sqrt(1 - y ** 2 - z ** 2)]
+    sym_disc = w ** 2 + x ** 2 + y ** 2 + z ** 2 - 1
+    # Check symbolic form of critical points.
+    disc = Discontinuity(sym_disc, ranges, args=[w])
+    eqns = [- sympy.sqrt(1 - w ** 2 - y ** 2 - z ** 2),
+            sympy.sqrt(1 - w ** 2 - y ** 2 - z ** 2)]
     sym_sols = list(disc.sym_sols)
+    # Check that symbolic solutions match.
     for eqn in eqns:
         for ind, sym_sol in enumerate(sym_sols):
             if sympy.Eq(eqn, sym_sol):
                 sym_sols.pop(ind)
                 break
-        else:
-            raise DiscontinuityError(
-                "Discontinuity test returned incorrect symbolic solutions!")
-    yrand, zrand = [.5 * random.random() - .25 for ind in [0, 1]]
-    lambda_sol = disc._lambdified(yrand, zrand)
-    subs_sol = [sym_sol.subs({y: yrand, z: zrand})
+            else:
+                raise DiscontinuityError(
+                    "Discontinuity test returned incorrect " +
+                    "symbolic solutions!")
+    # Check that lambdified functions agree.
+    wrand, yrand, zrand = [.5 * random.random() - .25 for ind in [0, 1, 2]]
+    lambda_sol = disc._lambdified(yrand, zrand, wrand)
+    subs_sol = [sym_sol.subs({w: wrand, y: yrand, z: zrand})
                 for sym_sol in disc.sym_sols]
     err = [((lambda_sol[ind] - subs_sol[ind]) ** 2) ** .5
            for ind in range(len(subs_sol))]
     if max(err) > 1 * 10 ** - 13:
         raise DiscontinuityError(
             "Lambdified solution does not match symbolic solution!")
-    test_children = [y ** 2 + z ** 2 - 1, y ** 2 + z ** 2 - 15. / 16]
+    test_children = [w ** 2 + y ** 2 + z ** 2 - 1,
+                     w ** 2 + y ** 2 + z ** 2 - 15. / 16]
     for test in test_children:
         for child in disc.children:
             if sympy.Equivalent(test, child._disc):
@@ -319,38 +340,87 @@ if __name__ == "__main__":
         else:
             raise DiscontinuityError(
                 "Direct children do not match!")
-    test_discs = [[disc_._disc for disc_ in level] for level in
-                  Discontinuities([sym_disc], ranges).leveled_discs]
-    sol_discs = [[x ** 2 + y ** 2 + z ** 2 - 1],
-                 [y ** 2 + z ** 2 - 1, y ** 2 + z ** 2 - 15. / 16],
-                 [z ** 2 - 1, z ** 2 - 15. / 16, z ** 2 - 7. / 8]]
-    for inda in range(len(test_discs)):
-        if not set(test_discs[ind]) == set(sol_discs[ind]):
-            raise DiscontinuityError("Levelled discontinuities do not match!")
-    test = Discontinuities([sym_disc], ranges)
-    test2 = test.nquad_disc_functions
-    args_list = [[.5 * random.random() - .25 for ind in range(inds)]
-                 for inds in [2, 1, 0]]
-    vars_list = [[y, z], [z], []]
-    for ind, level in enumerate(test.leveled_discs):
-        subs_points = [sym_sol.subs(dict(zip(vars_list[ind], args_list[ind])))
-                       for disc_ in level for sym_sol in disc_.sym_sols]
-        subs_points.sort()
-        lambda_points = test2[ind](*args_list[ind])
-        lambda_points.sort()
-        err = [((subs_points[ind] - lambda_points[ind]) ** 2) ** .5 < 10 ** -13
-               for ind in range(len(subs_points))]
-        if [item for item in err if not item]:
+    for child in disc.children:
+        lambda_sol = child._lambdified(zrand, wrand)
+        subs_sol = [sym_sol.subs({w: wrand, z: zrand})
+                    for sym_sol in child.sym_sols]
+        err = [((lambda_sol[ind] - subs_sol[ind]) ** 2) ** .5
+               for ind in range(len(subs_sol))]
+        if max(err) > 1 * 10 ** -13:
             raise DiscontinuityError(
-                "Lambdified functions do not match symbolic functions!")
+                "Lambdified solution does not match symbolic solution!")
 
-    # Test integration of functions
-    test_discs = [x ** 2 + y ** 2 - 1]
-    # This takes too long at present. Only integrate over x, y.
-    test4 = IntegrableFunction(H(test_discs[0]),
-                               ranges[: - 1], test_discs)
-    # Check against evaluation in Mathematica.
-    if ((test4.integrate()[0] - 0.907360054182972) ** 2) ** .5 > 10 ** - 7:
-        raise IntegrationError(
-            "Incorrect integration result for 2-D integration!")
+
+def testDiscontinuities():
+    pass
+
+
+if __name__ == "__main__":
+    testDiscontinuity()
+    # # Test handling of symbolic discontinuities
+    # w, x, y, z = [sympy.Symbol(var, real=True) for var in ['w', 'x', 'y', 'z']]
+    # ranges = [[x, -.25, 1.25], [y, -.25, 1.25], [z, -.25, 1.25]]
+    # sym_disc = x ** 2 + y ** 2 + z ** 2 - 1
+    # disc = Discontinuity(sym_disc, ranges)
+    # eqns = [- sympy.sqrt(1 - y ** 2 - z ** 2), sympy.sqrt(1 - y ** 2 - z ** 2)]
+    # sym_sols = list(disc.sym_sols)
+    # for eqn in eqns:
+    #     for ind, sym_sol in enumerate(sym_sols):
+    #         if sympy.Eq(eqn, sym_sol):
+    #             sym_sols.pop(ind)
+    #             break
+    #         else:
+    #             raise DiscontinuityError(
+    #                 "Discontinuity test returned incorrect symbolic solutions!")
+    # yrand, zrand = [.5 * random.random() - .25 for ind in [0, 1]]
+    # lambda_sol = disc._lambdified(yrand, zrand)
+    # subs_sol = [sym_sol.subs({y: yrand, z: zrand})
+    #             for sym_sol in disc.sym_sols]
+    # err = [((lambda_sol[ind] - subs_sol[ind]) ** 2) ** .5
+    #        for ind in range(len(subs_sol))]
+    # if max(err) > 1 * 10 ** - 13:
+    #     raise DiscontinuityError(
+    #         "Lambdified solution does not match symbolic solution!")
+    # test_children = [y ** 2 + z ** 2 - 1, y ** 2 + z ** 2 - 15. / 16]
+    # for test in test_children:
+    #     for child in disc.children:
+    #         if sympy.Equivalent(test, child._disc):
+    #             break
+    #     else:
+    #         raise DiscontinuityError(
+    #             "Direct children do not match!")
+    # test_discs = [[disc_._disc for disc_ in level] for level in
+    #               Discontinuities([sym_disc], ranges).leveled_discs]
+    # sol_discs = [[x ** 2 + y ** 2 + z ** 2 - 1],
+    #              [y ** 2 + z ** 2 - 1, y ** 2 + z ** 2 - 15. / 16],
+    #              [z ** 2 - 1, z ** 2 - 15. / 16, z ** 2 - 7. / 8]]
+    # for inda in range(len(test_discs)):
+    #     if not set(test_discs[ind]) == set(sol_discs[ind]):
+    #         raise DiscontinuityError("Levelled discontinuities do not match!")
+    # test = Discontinuities([sym_disc], ranges)
+    # test2 = test.nquad_disc_functions
+    # args_list = [[.5 * random.random() - .25 for ind in range(inds)]
+    #              for inds in [2, 1, 0]]
+    # vars_list = [[y, z], [z], []]
+    # for ind, level in enumerate(test.leveled_discs):
+    #     subs_points = [sym_sol.subs(dict(zip(vars_list[ind], args_list[ind])))
+    #                    for disc_ in level for sym_sol in disc_.sym_sols]
+    #     subs_points.sort()
+    #     lambda_points = test2[ind](*args_list[ind])
+    #     lambda_points.sort()
+    #     err = [((subs_points[ind] - lambda_points[ind]) ** 2) ** .5 < 10 ** -13
+    #            for ind in range(len(subs_points))]
+    #     if [item for item in err if not item]:
+    #         raise DiscontinuityError(
+    #             "Lambdified functions do not match symbolic functions!")
+
+    # # Test integration of functions
+    # test_discs = [x ** 2 + y ** 2 - 1]
+    # # This takes too long at present. Only integrate over x, y.
+    # test4 = IntegrableFunction(H(test_discs[0]),
+    #                            ranges[: - 1], test_discs)
+    # # Check against evaluation in Mathematica.
+    # if ((test4.integrate()[0] - 0.907360054182972) ** 2) ** .5 > 10 ** - 7:
+    #     raise IntegrationError(
+    #         "Incorrect integration result for 2-D integration!")
 
