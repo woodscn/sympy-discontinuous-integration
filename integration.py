@@ -284,8 +284,3 @@ def empty(seq): # Thanks StackOverflow!
         return all(map(empty, seq))
     except TypeError:
         return False
-
-
-def test():
-    return nose.run()
-
